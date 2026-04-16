@@ -2,102 +2,148 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import jieba
 import urllib3
 from urllib.parse import urljoin
+import io
+import zipfile
 
-# 基礎設定
+# 1. 基礎安全與介面設定
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="專業級情資分析爬蟲", page_icon="🕵️", layout="wide")
+st.set_page_config(page_title="AI 全能數據偵察兵", page_icon="🚀", layout="wide")
 
-# --- 主標題區 ---
-st.title("🕵️ 專業級網頁情資分析系統")
-st.write("請在下方輸入網址，系統將自動掃描文字、圖片並進行數據分析。")
+# 自定義 CSS 讓介面更美觀
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #ff4b4b; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 【關鍵修改】將輸入框移到正中間 ---
-# 使用 st.container 讓它看起來更像一個獨立的搜尋區塊
+st.title("🚀 AI 全能數據偵察兵 v3.0")
+st.write("一鍵掃描全球網頁：提取文字、分析關鍵字、抓取圖片並支援打包下載。")
+
+# 2. 核心輸入區塊（移至中間最顯眼處）
 with st.container():
-    # 使用 columns 讓輸入框和按鈕排在同一行，或上下緊鄰
-    target_url = st.text_input("📍 請貼上目標網址 (URL):", "https://zh.wikipedia.org/wiki/網路爬蟲", help="請確保包含 http 或 https")
-    col_btn, _ = st.columns([1, 4]) # 讓按鈕不要太寬
-    start_button = col_btn.button("🚀 開始全方位執行掃描", use_container_width=True)
+    target_url = st.text_input("📍 請貼上目標網址 (URL):", "https://zh.wikipedia.org/wiki/網路爬蟲")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        start_btn = st.button("🔥 啟動深度掃描")
+    with col2:
+        # 側邊欄改為滑動式參數調整
+        st.write("") 
 
-st.markdown("---")
-
-# --- 側邊欄：僅保留微調參數 ---
+# 3. 側邊欄設定
 with st.sidebar:
-    st.header("⚙️ 篩選參數設定")
-    min_length = st.slider("過濾最小字數:", 0, 100, 10)
-    show_images = st.checkbox("抓取並顯示圖片", value=True)
-    st.info("提示：增加最小字數可以過濾導覽列雜訊。")
+    st.header("🛠️ 偵察參數設定")
+    min_word_len = st.slider("過濾最小字數", 2, 100, 10)
+    top_n_images = st.slider("圖片預覽數量", 4, 40, 16)
+    st.markdown("---")
+    st.info("💡 提示：若遇到 'Just a moment' 頁面，代表該網站有強力防火牆。")
 
-# --- 主程式邏輯 ---
-if start_button:
+# 4. 爬蟲主邏輯
+if start_btn:
     try:
-        with st.spinner('正在掃描網頁內容，請稍候...'):
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}
+        with st.spinner('🕵️ 正在執行多重偽裝並提取數據...'):
+            # 強化的 Headers 偽裝
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://www.google.com/'
+            }
+            
             response = requests.get(target_url, headers=headers, verify=False, timeout=15)
             response.encoding = response.apparent_encoding
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # 1. 抓取文字內容
-            tags = ['h1', 'h2', 'h3', 'p', 'li', 'div']
-            raw_data = []
-            for tag in tags:
+            # --- A. 文字數據處理 ---
+            raw_text_list = []
+            full_content_for_cloud = ""
+            for tag in ['h1', 'h2', 'h3', 'p', 'li']:
                 for item in soup.find_all(tag):
                     text = item.get_text().strip()
-                    if text and len(text) >= min_length:
-                        raw_data.append(text)
+                    if len(text) >= min_word_len:
+                        raw_text_list.append(text)
+                        full_content_for_cloud += text + " "
             
-            unique_data = list(dict.fromkeys(raw_data))
-            df = pd.DataFrame(unique_data, columns=["內容"])
+            df = pd.DataFrame(list(dict.fromkeys(raw_text_list)), columns=["內容"])
 
-            # 2. 抓取圖片內容
-            img_urls = []
-            if show_images:
-                for img in soup.find_all('img'):
-                    src = img.get('src')
-                    if src:
-                        img_urls.append(urljoin(target_url, src))
+            # --- B. 圖片數據處理 ---
+            img_links = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src:
+                    img_links.append(urljoin(target_url, src))
+            img_links = list(dict.fromkeys(img_links)) # 去重
 
-            # --- 畫面呈現 ---
-            # A. 數據指標區
-            st.subheader("📊 數據摘要")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("抓取總段落", len(unique_data))
-            c2.metric("發現圖片數", len(img_urls))
-            c3.metric("網頁標題", soup.title.string[:20] if soup.title else "無標題")
+            # --- 5. 數據呈現 (Tabs 介面) ---
+            st.subheader("📊 掃描報告摘要")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("文字段落", len(df))
+            m2.metric("圖片總數", len(img_links))
+            m3.metric("狀態碼", response.status_code)
 
-            # B. 分頁顯示結果
-            tab1, tab2, tab3 = st.tabs(["📄 文字內容", "🖼️ 圖片牆", "📈 分佈分析"])
-            
-            with tab1:
-                search = st.text_input("🔍 在結果中搜尋關鍵字:")
-                display_df = df[df['內容'].str.contains(search)] if search else df
-                st.dataframe(display_df, use_container_width=True)
+            tab_text, tab_cloud, tab_img = st.tabs(["📄 文字情報", "☁️ 關鍵字雲分析", "🖼️ 多媒體牆"])
+
+            with tab_text:
+                search = st.text_input("🔍 關鍵字搜尋：")
+                final_df = df[df['內容'].str.contains(search)] if search else df
+                st.dataframe(final_df, use_container_width=True)
                 
-                csv = display_df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📥 下載篩選後的資料 (CSV)", csv, "scraped_data.csv", "text/csv")
+                csv_data = final_df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 匯出 CSV 資料報表", csv_data, "report.csv", "text/csv")
 
-            with tab2:
-                if img_urls:
-                    st.write(f"發現 {len(img_urls)} 張圖片（預覽前 16 張）：")
-                    cols = st.columns(4)
-                    for idx, url in enumerate(img_urls[:16]):
-                        with cols[idx % 4]:
-                            try:
-                                st.image(url, use_container_width=True)
-                            except:
-                                pass
+            with tab_cloud:
+                if len(full_content_for_cloud) > 20:
+                    # 使用 jieba 進行中文分詞
+                    words = jieba.lcut(full_content_for_cloud)
+                    # 過濾掉單個字與空白
+                    words_filtered = " ".join([w for w in words if len(w) > 1])
+                    
+                    # 生成詞雲
+                    wc = WordCloud(
+                        font_path=None, # Streamlit Cloud 預設字體
+                        width=1000, height=500, 
+                        background_color="white",
+                        colormap='viridis'
+                    ).generate(words_filtered)
+                    
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    ax.imshow(wc, interpolation='bilinear')
+                    ax.axis("off")
+                    st.pyplot(fig)
                 else:
-                    st.write("未發現可顯示的圖片。")
+                    st.warning("文字內容不足以生成分析圖表。")
 
-            with tab3:
-                st.write("段落字數長度分佈（視覺化）：")
-                df['字數'] = df['內容'].str.len()
-                st.bar_chart(df['字數'])
+            with tab_img:
+                if img_links:
+                    st.write(f"📸 正在顯示前 {top_n_images} 張圖片：")
+                    
+                    # 圖片 ZIP 打包下載功能
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                        for i, url in enumerate(img_links[:top_n_images]):
+                            try:
+                                img_res = requests.get(url, timeout=5)
+                                if img_res.status_code == 200:
+                                    zip_file.writestr(f"image_{i}.jpg", img_res.content)
+                            except:
+                                continue
+                    
+                    st.download_button("📦 打包下載所有圖片 (.zip)", zip_buffer.getvalue(), "images.zip", "application/zip")
+
+                    # 圖片顯示
+                    cols = st.columns(4)
+                    for idx, url in enumerate(img_links[:top_n_images]):
+                        with cols[idx % 4]:
+                            st.image(url, use_container_width=True)
+                else:
+                    st.info("此網頁未偵測到圖片連結。")
 
     except Exception as e:
-        st.error(f"掃描失敗，請確認網址是否正確：{e}")
+        st.error(f"⚠️ 偵察中斷：{e}")
 
 st.markdown("---")
-st.caption("Status: Python 3.14 Engine Running | Streamlit Interface v2.1")
+st.caption("🚀 AI Scraper Engine | Powered by Streamlit & Python 3.14")
